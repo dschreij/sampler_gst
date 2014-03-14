@@ -17,14 +17,147 @@ You should have received a copy of the GNU General Public License
 along with OpenSesame.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import libopensesame.sampler
+__author__ = "Daniel Schreij"
+__license__ = "GPLv3"
+
+import os
+import sys
+
+# Import OpenSesame specific items
+from libopensesame import item, debug, generic_response
+from libqtopensesame.items.qtautoplugin import qtautoplugin
+
+# The `osexception` class is only available as of OpenSesame 2.8.0. If it is not
+# available, fall back to the regular `Exception` class.
+try:
+	from libopensesame.exceptions import osexception
+except:
+	osexception = Exception
+
+# Gstreamer components
+
+# If The Gstreamer SDK is found in the plugin folder, add the relevant paths
+# so that we use this framework. This is Windows only.
+if os.name == "nt":
+	if hasattr(sys,"frozen") and sys.frozen in ("windows_exe", "console_exe"):
+		exe_path = os.path.dirname(sys.executable)
+		os.environ["PATH"] = os.path.join(exe_path, "gstreamer", "dll") + ';' + os.environ["PATH"]
+		os.environ["GST_PLUGIN_PATH"] = os.path.join(exe_path, "gstreamer", "plugins")
+		sys.path.append(os.path.join(exe_path, "gstreamer", "python"))		
+	else:
+		os.environ["PATH"] = os.path.join(os.environ["GSTREAMER_SDK_ROOT_X86"],"bin") + ';' + os.environ["PATH"]
+		sys.path.append(os.path.join(os.environ["GSTREAMER_SDK_ROOT_X86"],"lib","python2.7","site-packages"))
+if os.name == "posix" and sys.platform == "darwin":
+	# For OS X
+	# When installed with the GStreamer SDK installers from GStreamer.com
+	sys.path.append("/Library/Frameworks/GStreamer.framework/Versions/Current/lib/python2.7/site-packages")
+		
+# Try to load Gstreamer
+try:
+	import pygst
+	pygst.require("0.10")
+	import gst
+except:
+	raise osexception("OpenSesame could not find the GStreamer framework!")
+
 from libqtopensesame.misc import _
 from libqtopensesame.items import qtitem
 from libqtopensesame.ui import sampler_widget_ui
 from libqtopensesame.widgets import pool_widget
-from PyQt4 import QtCore, QtGui
+from PyQt4 import QtGui
 
-class sampler(libopensesame.sampler.sampler, qtitem.qtitem):
+class sampler_gst(item.item, generic_response.generic_response):
+
+	"""Sound playback item"""
+
+	description = u'Plays a sound file in .wav or .ogg format'
+
+	def __init__(self, name, experiment, string = None):
+
+		"""
+		Constructor.
+
+		Arguments:
+		name 		--	The name of the item.
+		experiment 	--	The experiment.
+
+		Keyword arguments:
+		string		-- 	The item definition string. (default=None)
+		"""
+
+		self.sample = u''
+		self.pan = 0
+		self.pitch = 1
+		self.fade_in = 0
+		self.volume = 1.0
+		self.stop_after = 0
+		self.duration = u'sound'
+		self.block = False
+		item.item.__init__(self, name, experiment, string)
+
+	def prepare_duration_sound(self):
+
+		"""Sets the duration function for 'sound' duration."""
+
+		self.block = True
+		self._duration_func = self.dummy
+
+	def prepare(self):
+
+		"""Prepares for playback."""
+
+		item.item.prepare(self)
+		if self.sample.strip() == u'':
+			raise osexception( \
+				u'No sample has been specified in sampler "%s"' % self.name)
+		sample = self.experiment.get_file(self.eval_text(self.sample))
+		if debug.enabled:
+			self.sampler = openexp.sampler.sampler(self.experiment, sample)
+		else:
+			try:
+				self.sampler = openexp.sampler.sampler(self.experiment, sample)
+			except Exception as e:
+				raise osexception( \
+					u'Failed to load sample in sampler "%s": %s' % (self.name, \
+					e))
+
+		pan = self.get(u'pan')
+		if pan == -20:
+			pan = u'left'
+		elif pan == 20:
+			pan = u'right'
+
+		self.sampler.pan(pan)
+		self.sampler.volume(self.get(u'volume'))
+		self.sampler.pitch(self.get(u'pitch'))
+		self.sampler.fade_in(self.get(u'fade_in'))
+		self.sampler.stop_after(self.get(u'stop_after'))
+		generic_response.generic_response.prepare(self)
+
+	def run(self):
+
+		"""Plays the sample."""
+
+		self.set_item_onset(self.time())
+		self.set_sri()
+		self.sampler.play(self.block)
+		self.process_response()
+
+	def var_info(self):
+
+		"""
+		Give a list of dictionaries with variable descriptions
+
+		Returns:
+		A list of (name, description) tuples
+		"""		
+
+		return item.item.var_info(self) + \
+			generic_response.generic_response.var_info(self)
+
+
+
+class qtsampler_gst(sampler_gst, qtautoplugin):	
 
 	"""GUI controls for the sampler item"""
 
@@ -41,7 +174,6 @@ class sampler(libopensesame.sampler.sampler, qtitem.qtitem):
 		string -- definition string (default=None)
 		"""
 		
-		libopensesame.sampler.sampler.__init__(self, name, experiment, string)
 		qtitem.qtitem.__init__(self)	
 		self.lock = False			
 				
